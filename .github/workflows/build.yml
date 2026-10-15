@@ -3,46 +3,105 @@ name: Build LovelyKent APK
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+      - name: Set up Java
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Extract ZIP
+      - name: Install unzip
+        run: sudo apt-get update && sudo apt-get install -y unzip
+
+      - name: Find and extract ZIP
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y unzip
-          ZIP=$(find . -maxdepth 3 -type f -iname "*.zip" | head -n 1)
+          set -e
+
+          echo "Searching for ZIP archive..."
+
+          ZIP=$(find . -type f \
+            -iname "*.zip" \
+            -not -path "./.git/*" \
+            -not -path "./extracted/*" \
+            | head -n 1)
+
           if [ -z "$ZIP" ]; then
-            echo "ZIP archive not found in repository"
+            echo "::error::ZIP archive not found in repository."
+            echo "Upload your Android project ZIP to the repository first."
             exit 1
           fi
-          mkdir extracted
-          unzip -q "$ZIP" -d extracted
+
+          echo "Found archive: $ZIP"
+          file "$ZIP"
+
+          if ! unzip -t "$ZIP"; then
+            echo "::error::The ZIP archive is invalid or damaged."
+            exit 1
+          fi
+
+          mkdir -p extracted
+          unzip -oq "$ZIP" -d extracted
+
+          echo "Extracted files:"
+          find extracted -maxdepth 3 -type f | head -n 100
+
           GRADLEW=$(find extracted -type f -name gradlew | head -n 1)
+
           if [ -z "$GRADLEW" ]; then
-            echo "gradlew not found inside ZIP. The archive may contain only source files or another ZIP."
-            find extracted -maxdepth 4 -type f | head -n 80
+            echo "::error::gradlew not found inside the ZIP."
+            echo "The ZIP must contain the Android Gradle project, including gradlew."
+            echo "Files found:"
+            find extracted -maxdepth 5 -type f | head -n 200
             exit 1
           fi
-          echo "PROJECT_DIR=$(dirname "$GRADLEW")" >> "$GITHUB_ENV"
 
-      - name: Build APK
+          PROJECT_DIR=$(dirname "$GRADLEW")
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Android project directory: $PROJECT_DIR"
+
+      - name: Build debug APK
+        shell: bash
         run: |
+          set -e
           cd "$PROJECT_DIR"
-          chmod +x gradlew
-          ./gradlew assembleDebug
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --stacktrace
 
-      - uses: actions/upload-artifact@v4
+      - name: Find generated APK
+        id: apk
+        shell: bash
+        run: |
+          APK=$(find "$PROJECT_DIR" -type f \
+            -path "*/build/outputs/apk/*/*.apk" \
+            | head -n 1)
+
+          if [ -z "$APK" ]; then
+            echo "::error::Build finished but no APK was found."
+            exit 1
+          fi
+
+          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
+          echo "APK found: $APK"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: LovelyKent-APK
-          path: extracted/**/build/outputs/apk/debug/*.apk
+          name: LovelyKent-debug-APK
+          path: ${{ env.APK_PATH }}
+          if-no-files-found: error
+          retention-days: 7
