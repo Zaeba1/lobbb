@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build LovelyKent APK
 
 on:
   workflow_dispatch:
@@ -10,38 +10,31 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Find and extract project ZIP
-        run: |
-          ZIP=$(find . -maxdepth 2 -type f -name "*.zip" | head -n 1)
-
-          if [ -z "$ZIP" ]; then
-            echo "ERROR: ZIP archive not found"
-            exit 1
-          fi
-
-          echo "Found archive: $ZIP"
-          mkdir -p extracted
-          unzip -q "$ZIP" -d extracted
-
-          GRADLEW=$(find extracted -type f -name gradlew | head -n 1)
-
-          if [ -z "$GRADLEW" ]; then
-            echo "ERROR: gradlew not found in ZIP"
-            echo "Extracted files:"
-            find extracted -maxdepth 4 -type f | head -n 100
-            exit 1
-          fi
-
-          echo "PROJECT_DIR=$(dirname "$GRADLEW")" >> "$GITHUB_ENV"
-
-      - name: Set up Java
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
+
+      - name: Extract ZIP
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip
+          ZIP=$(find . -maxdepth 3 -type f -iname "*.zip" | head -n 1)
+          if [ -z "$ZIP" ]; then
+            echo "ZIP archive not found in repository"
+            exit 1
+          fi
+          mkdir extracted
+          unzip -q "$ZIP" -d extracted
+          GRADLEW=$(find extracted -type f -name gradlew | head -n 1)
+          if [ -z "$GRADLEW" ]; then
+            echo "gradlew not found inside ZIP. The archive may contain only source files or another ZIP."
+            find extracted -maxdepth 4 -type f | head -n 80
+            exit 1
+          fi
+          echo "PROJECT_DIR=$(dirname "$GRADLEW")" >> "$GITHUB_ENV"
 
       - name: Build APK
         run: |
@@ -49,8 +42,7 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: LovelyKent-debug-apk
+          name: LovelyKent-APK
           path: extracted/**/build/outputs/apk/debug/*.apk
