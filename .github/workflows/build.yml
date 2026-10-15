@@ -1,12 +1,9 @@
-name: Build LovelyKent APK
+name: Build Android APK
 
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
-
-permissions:
-  contents: read
+    branches: [main]
 
 jobs:
   build:
@@ -16,56 +13,44 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Unzip Android project
+      - name: Find and extract project ZIP
         run: |
-          ZIP_FILE="LovelyKent-full-overlay.zip"
+          ZIP=$(find . -maxdepth 2 -type f -name "*.zip" | head -n 1)
 
-          if [ ! -f "$ZIP_FILE" ]; then
-            echo "ZIP not found: $ZIP_FILE"
-            echo "Archives in repository:"
-            find . -maxdepth 2 -type f -name '*.zip'
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: ZIP archive not found"
             exit 1
           fi
 
+          echo "Found archive: $ZIP"
           mkdir -p extracted
-          unzip -q "$ZIP_FILE" -d extracted
+          unzip -q "$ZIP" -d extracted
 
-          echo "Extracted files:"
-          find extracted -maxdepth 4 \
-            \( -name gradlew -o -name settings.gradle \
-            -o -name settings.gradle.kts \) -print
-
-      - name: Locate Android project
-        id: project
-        run: |
-          GRADLEW="$(find extracted -type f -name gradlew -print -quit)"
+          GRADLEW=$(find extracted -type f -name gradlew | head -n 1)
 
           if [ -z "$GRADLEW" ]; then
             echo "ERROR: gradlew not found in ZIP"
+            echo "Extracted files:"
+            find extracted -maxdepth 4 -type f | head -n 100
             exit 1
           fi
 
-          PROJECT_DIR="$(dirname "$GRADLEW")"
-          echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
-          chmod +x "$GRADLEW"
+          echo "PROJECT_DIR=$(dirname "$GRADLEW")" >> "$GITHUB_ENV"
 
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+          java-version: "17"
 
       - name: Build APK
-        working-directory: ${{ steps.project.outputs.dir }}
-        run: ./gradlew assembleDebug --stacktrace
+        run: |
+          cd "$PROJECT_DIR"
+          chmod +x gradlew
+          ./gradlew assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: LovelyKent-debug-apk
           path: extracted/**/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
-          retention-days: 14
