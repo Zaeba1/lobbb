@@ -3,9 +3,7 @@ name: Build LovelyKent APK
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
 
 permissions:
   contents: read
@@ -24,84 +22,75 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Install unzip
-        run: sudo apt-get update && sudo apt-get install -y unzip
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip
 
-      - name: Find and extract ZIP
+      - name: Extract project ZIP
         shell: bash
         run: |
           set -e
 
-          echo "Searching for ZIP archive..."
-
-          ZIP=$(find . -type f \
-            -iname "*.zip" \
+          ZIP=$(find . -type f -iname "*.zip" \
             -not -path "./.git/*" \
-            -not -path "./extracted/*" \
-            | head -n 1)
+            -not -path "./extracted/*" | head -n 1)
 
           if [ -z "$ZIP" ]; then
-            echo "::error::ZIP archive not found in repository."
-            echo "Upload your Android project ZIP to the repository first."
-            exit 1
-          fi
-
-          echo "Found archive: $ZIP"
-          file "$ZIP"
-
-          if ! unzip -t "$ZIP"; then
-            echo "::error::The ZIP archive is invalid or damaged."
+            echo "::error::ZIP archive not found"
             exit 1
           fi
 
           mkdir -p extracted
           unzip -oq "$ZIP" -d extracted
 
-          echo "Extracted files:"
-          find extracted -maxdepth 3 -type f | head -n 100
+          PROJECT_DIR="extracted/LovelyKent"
 
-          GRADLEW=$(find extracted -type f -name gradlew | head -n 1)
-
-          if [ -z "$GRADLEW" ]; then
-            echo "::error::gradlew not found inside the ZIP."
-            echo "The ZIP must contain the Android Gradle project, including gradlew."
-            echo "Files found:"
-            find extracted -maxdepth 5 -type f | head -n 200
+          if [ ! -f "$PROJECT_DIR/settings.gradle.kts" ]; then
+            echo "::error::settings.gradle.kts not found"
+            find extracted -name settings.gradle.kts
             exit 1
           fi
 
-          PROJECT_DIR=$(dirname "$GRADLEW")
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Android project directory: $PROJECT_DIR"
 
-      - name: Build debug APK
+      - name: Generate Gradle Wrapper
         shell: bash
         run: |
           set -e
           cd "$PROJECT_DIR"
-          chmod +x ./gradlew
-          ./gradlew assembleDebug --stacktrace
 
-      - name: Find generated APK
-        id: apk
-        shell: bash
-        run: |
-          APK=$(find "$PROJECT_DIR" -type f \
-            -path "*/build/outputs/apk/*/*.apk" \
-            | head -n 1)
+          GRADLE_VERSION=$(grep -oE 'gradle-[0-9]+\.[0-9]+(\.[0-9]+)?(-all|-bin)?\.zip' \
+            gradle/wrapper/gradle-wrapper.properties 2>/dev/null \
+            | head -n 1 | sed -E 's/gradle-//; s/-(all|bin)\.zip//')
 
-          if [ -z "$APK" ]; then
-            echo "::error::Build finished but no APK was found."
-            exit 1
+          if [ -z "$GRADLE_VERSION" ]; then
+            GRADLE_VERSION="8.9"
           fi
 
-          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
-          echo "APK found: $APK"
+          echo "Using Gradle $GRADLE_VERSION"
 
-      - name: Upload APK artifact
+          curl -fsSL \
+            "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
+            -o /tmp/gradle.zip
+
+          unzip -q /tmp/gradle.zip -d /tmp
+          /tmp/gradle-${GRADLE_VERSION}/bin/gradle wrapper \
+            --gradle-version "$GRADLE_VERSION"
+
+          chmod +x gradlew
+
+      - name: Build APK
+        shell: bash
+        run: |
+          set -e
+          cd "$PROJECT_DIR"
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: LovelyKent-debug-APK
-          path: ${{ env.APK_PATH }}
+          path: extracted/LovelyKent/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 7
